@@ -30,6 +30,8 @@ export default function AdminPage() {
       if (code === 'MATCH_ALREADY_IMPORTED') {
         const confirmed = window.confirm('Esta partida ya fue importada. ¿Quieres recomputar sus estadísticas y puntos desde cero?')
         if (confirmed) await handleImport(encounterId, true)
+      } else if (code === 'UNMAPPED_PLAYERS') {
+        setMessage({ type: 'error', text: 'Algún jugador de la partida no coincide con los asignados al encuentro (perfil privado o ID distinto). Revisa los jugadores del encuentro.' })
       } else if (code === 'MATCH_NOT_AVAILABLE') {
         setMessage({ type: 'error', text: 'OpenDota todavía no tiene esta partida. Puede tardar unos minutos en aparecer.' })
       } else {
@@ -42,10 +44,16 @@ export default function AdminPage() {
 
   async function handleWinner(encounterId: string, winner: 'radiant' | 'dire') {
     setBusyId(encounterId)
-    const updated = await markWinner(encounterId, winner)
-    setEncounters((current) => current.map((encounter) => encounter.id === updated.id ? { ...updated } : encounter))
-    setMessage({ type: 'success', text: `${updated.name}: ganador marcado y ranking actualizado.` })
-    setBusyId(null)
+    try {
+      const updated = await markWinner(encounterId, winner)
+      setEncounters((current) => current.map((encounter) => encounter.id === updated.id ? { ...updated } : encounter))
+      setMessage({ type: 'success', text: `${updated.name}: ganador marcado y ranking actualizado.` })
+    } catch (error) {
+      const imported = error instanceof Error && error.message === 'ENCOUNTER_IMPORTED'
+      setMessage({ type: 'error', text: imported ? 'Este encuentro ya se importó desde una partida; el ganador sale de la partida y no se puede cambiar a mano.' : 'No se pudo marcar el ganador.' })
+    } finally {
+      setBusyId(null)
+    }
   }
 
   return <main className="site-shell admin-shell">

@@ -1,0 +1,863 @@
+diff --git a/app/admin/page.tsx b/app/admin/page.tsx
+index 2f8bf7f..3127bf1 100644
+--- a/app/admin/page.tsx
++++ b/app/admin/page.tsx
+@@ -30,6 +30,8 @@ export default function AdminPage() {
+       if (code === 'MATCH_ALREADY_IMPORTED') {
+         const confirmed = window.confirm('Esta partida ya fue importada. ¿Quieres recomputar sus estadísticas y puntos desde cero?')
+         if (confirmed) await handleImport(encounterId, true)
++      } else if (code === 'UNMAPPED_PLAYERS') {
++        setMessage({ type: 'error', text: 'Algún jugador de la partida no coincide con los asignados al encuentro (perfil privado o ID distinto). Revisa los jugadores del encuentro.' })
+       } else if (code === 'MATCH_NOT_AVAILABLE') {
+         setMessage({ type: 'error', text: 'OpenDota todavía no tiene esta partida. Puede tardar unos minutos en aparecer.' })
+       } else {
+@@ -42,10 +44,16 @@ export default function AdminPage() {
+ 
+   async function handleWinner(encounterId: string, winner: 'radiant' | 'dire') {
+     setBusyId(encounterId)
+-    const updated = await markWinner(encounterId, winner)
+-    setEncounters((current) => current.map((encounter) => encounter.id === updated.id ? { ...updated } : encounter))
+-    setMessage({ type: 'success', text: `${updated.name}: ganador marcado y ranking actualizado.` })
+-    setBusyId(null)
++    try {
++      const updated = await markWinner(encounterId, winner)
++      setEncounters((current) => current.map((encounter) => encounter.id === updated.id ? { ...updated } : encounter))
++      setMessage({ type: 'success', text: `${updated.name}: ganador marcado y ranking actualizado.` })
++    } catch (error) {
++      const imported = error instanceof Error && error.message === 'ENCOUNTER_IMPORTED'
++      setMessage({ type: 'error', text: imported ? 'Este encuentro ya se importó desde una partida; el ganador sale de la partida y no se puede cambiar a mano.' : 'No se pudo marcar el ganador.' })
++    } finally {
++      setBusyId(null)
++    }
+   }
+ 
+   return <main className="site-shell admin-shell">
+diff --git a/app/globals.css b/app/globals.css
+index 70bcefa..a8e5ff9 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -297,3 +297,85 @@ footer { display: flex; justify-content: space-between; max-width: 1240px; margi
+ .results-card { margin-top: 18px; }.admin-muted { margin: -8px 0 20px; color: var(--muted-ink); font-size: 13px; }.winner-actions { display: flex; flex-wrap: wrap; gap: 9px; }.winner-actions button { border-color: var(--line); background: transparent; color: var(--muted-ink); }.winner-actions button:hover { border-color: rgba(98, 216, 144, .55); color: var(--radiant); }
+ @media (max-width: 700px) { .admin-content { padding: 42px 18px 60px; }.admin-grid { grid-template-columns: 1fr; }.admin-status { display: none; } }
+ 
++
++/* ---------- Páginas de ranking y perfil ---------- */
++.content-grid.single { grid-template-columns: minmax(0, 1fr); max-width: 1040px; }
++.empty-state { margin: 18px 0; padding: 22px; border: 1px dashed var(--line); color: var(--muted-ink); font-size: 13px; text-align: center; }
++.trophy-icon { color: #ceb875; }
++.ranking-search { max-width: 420px; margin-bottom: 18px; }
++.table-scroll { overflow-x: auto; border: 1px solid var(--line); background: linear-gradient(120deg, rgba(20, 29, 26, .9), rgba(11, 17, 16, .82)); }
++.ranking-table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 13px; }
++.ranking-table th { padding: 13px 16px; border-bottom: 1px solid var(--line); color: var(--muted-ink); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-align: left; text-transform: uppercase; }
++.ranking-table td { padding: 12px 16px; border-bottom: 1px solid rgba(210, 220, 205, .08); color: #d1d4cb; }
++.ranking-table tr:last-child td { border-bottom: 0; }
++.ranking-table tbody tr:hover { background: rgba(98, 216, 144, .05); }
++.ranking-table .num { text-align: right; font-variant-numeric: tabular-nums; }
++.ranking-table .strong { color: var(--ink); font-weight: 700; }
++.ranking-table .position { width: 56px; }
++.ranking-table .podium-1 .position { color: #ceb875; }.ranking-table .podium-2 .position { color: #b9c1c7; }.ranking-table .podium-3 .position { color: #c58a5a; }
++.ranking-player { display: inline-flex; align-items: center; gap: 12px; }
++.ranking-player span:last-child { display: flex; flex-direction: column; gap: 3px; }
++.ranking-player b { color: var(--ink); font-weight: 600; }.ranking-player small { color: #77827b; font-size: 10px; }
++.ranking-player:hover b { color: var(--radiant); }
++
++.profile { display: flex; flex-direction: column; gap: 0; }
++.back-link { align-self: flex-start; margin: 0 0 8px; }
++.profile-photo-wrap { display: flex; justify-content: center; margin-bottom: -48px; position: relative; z-index: 3; }
++.profile-photo { width: 160px; height: 160px; object-fit: cover; border: 1px solid rgba(98, 216, 144, .6); box-shadow: 0 0 40px rgba(98, 216, 144, .18); }
++.profile-photo.rank-avatar { display: grid; place-items: center; font-family: var(--font-serif); font-size: 54px; font-weight: 600; }
++.profile-card { padding: 78px 32px 30px; border: 1px solid var(--line); background: linear-gradient(120deg, rgba(20, 29, 26, .92), rgba(11, 17, 16, .86)); text-align: center; }
++.profile-card h1 { margin: 10px 0 0; font-size: clamp(38px, 6vw, 60px); }
++.profile-medal { display: inline-flex; align-items: center; gap: 8px; margin: 12px 0 0; color: var(--muted-ink); font-size: 14px; }
++.rank-dot { width: 9px; height: 9px; border-radius: 50%; background: #bca16a; }
++.rank-dot.legend { background: #b889dd; }.rank-dot.archon { background: #7fadd9; }.rank-dot.guardian { background: #78bf9b; }
++.key-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; margin: 28px 0 0; border: 1px solid var(--line); background: var(--line); }
++.key-stats div { padding: 16px 8px; background: rgba(9, 14, 13, .92); }
++.key-stats dt { color: var(--muted-ink); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
++.key-stats dd { margin: 6px 0 0; color: var(--radiant); font-family: var(--font-serif); font-size: 26px; }
++.profile-section { margin-top: 44px; }
++.section-heading h2 { margin: 7px 0 22px; font-size: 32px; font-weight: 500; }
++.chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
++.chart-card { min-width: 0; padding: 20px; border: 1px solid var(--line); background: linear-gradient(120deg, rgba(20, 29, 26, .9), rgba(11, 17, 16, .82)); }
++.chart-card.wide { grid-column: 1 / -1; }
++.chart-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
++.chart-card h3 { margin: 0; font-size: 18px; font-weight: 500; }
++.chart-card header strong { color: var(--radiant); font-size: 18px; }.chart-card header small { color: #77827b; font-size: 10px; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; }
++.chart-svg { display: block; width: 100%; height: auto; }
++.legend { display: flex; gap: 18px; margin: 8px 0 0; color: var(--muted-ink); font-size: 11px; }
++.legend span::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 6px; background: var(--radiant); }
++.legend .d::before { background: var(--dire); }.legend .a::before { background: #7fadd9; }
++.profile-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
++.hero-list, .match-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
++.hero-list li { display: grid; grid-template-columns: 44px 1fr 116px; grid-template-areas: 'img name meta' 'img bar meta'; align-items: center; column-gap: 12px; row-gap: 5px; padding: 10px 0; border-top: 1px solid rgba(210, 220, 205, .08); }
++.hero-list img, .hero-fallback { grid-area: img; width: 44px; height: 25px; background: rgba(255, 255, 255, .06); object-fit: cover; }
++.hero-name { grid-area: name; color: var(--ink); font-size: 13px; }
++.hero-bar { grid-area: bar; height: 3px; background: rgba(239, 106, 103, .35); }.hero-bar i { display: block; height: 100%; background: var(--radiant); }
++.hero-meta { grid-area: meta; color: var(--muted-ink); font-size: 10px; text-align: right; white-space: nowrap; }
++.match-list li { display: grid; grid-template-columns: 64px 1fr auto; grid-template-areas: 'res hero kda' 'res meta meta'; column-gap: 12px; padding: 10px 0; border-top: 1px solid rgba(210, 220, 205, .08); font-size: 13px; }
++.match-list .result { grid-area: res; align-self: center; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
++.result.win { color: var(--radiant); }.result.loss { color: var(--dire); }
++.match-list .kda { grid-area: kda; color: var(--ink); font-variant-numeric: tabular-nums; }
++.match-list .muted { grid-area: meta; color: #77827b; font-size: 11px; }
++.profile-missing { text-align: center; }
++@media (max-width: 850px) { .chart-grid, .profile-columns { grid-template-columns: 1fr; } }
++@media (max-width: 600px) {
++  .topbar { flex-wrap: wrap; gap: 12px; }
++  .nav-links { display: flex; gap: 18px; margin: 0 auto 0 0; order: 3; width: 100%; }
++  .key-stats { grid-template-columns: repeat(2, 1fr); }
++  .profile-card { padding: 78px 16px 24px; }
++}
++
++/* ---------- Admin: estilos que faltaban para la importación ---------- */
++.admin-notice { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding: 12px 14px; border: 1px solid var(--line); font-size: 13px; }
++.admin-notice.success { border-color: rgba(98, 216, 144, .45); color: var(--radiant); }.admin-notice.error { border-color: rgba(239, 106, 103, .45); color: var(--dire); }
++.admin-notice button { margin-left: auto; border: 1px solid currentColor; background: transparent; color: inherit; padding: 6px 10px; font: inherit; font-size: 10px; text-transform: uppercase; cursor: pointer; }
++.data-pill { display: inline-flex; align-items: center; gap: 8px; border: 1px solid rgba(98, 216, 144, .35); padding: 6px 10px; color: var(--radiant); font-size: 11px; }
++.data-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--radiant); }
++.imported-badge { border: 1px solid rgba(98, 216, 144, .4); color: var(--radiant); padding: 5px 7px; font-size: 9px; text-transform: uppercase; white-space: nowrap; }
++.admin-encounter.expanded { flex-wrap: wrap; }
++.encounter-copy { flex: 1 1 200px; }
++.import-row { display: flex; flex: 1 1 100%; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
++.import-row label { display: flex; flex: 1 1 220px; flex-direction: column; gap: 7px; color: var(--muted-ink); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
++.import-row input { border: 1px solid var(--line); background: rgba(4, 9, 8, .58); color: var(--ink); padding: 12px; font: inherit; font-size: 13px; outline: none; }
++.import-row .admin-button { margin-top: 0; }
++.winner-actions { flex: 1 1 100%; align-items: center; }.winner-actions > span { color: var(--muted-ink); font-size: 11px; }
+diff --git a/app/jugador/[accountId]/page.tsx b/app/jugador/[accountId]/page.tsx
+new file mode 100644
+index 0000000..230dc1e
+--- /dev/null
++++ b/app/jugador/[accountId]/page.tsx
+@@ -0,0 +1,119 @@
++import Link from 'next/link'
++import { ArrowLeft } from 'lucide-react'
++import { KdaBars, LineChart } from '@/components/charts'
++import { SiteNav } from '@/components/site-nav'
++import { getPlayerByAccountId, getPlayerMatchStats } from '@/lib/db'
++import { getHeroConstants } from '@/lib/opendota'
++
++const average = (values: number[]) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0)
++const format = (value: number, digits = 0) => value.toLocaleString('es-ES', { maximumFractionDigits: digits, minimumFractionDigits: digits })
++
++export default async function PlayerPage({ params }: { params: Promise<{ accountId: string }> }) {
++  // En Next 15+ `params` es una promesa: sin await, accountId llega vacío.
++  const { accountId } = await params
++  const player = /^\d+$/.test(accountId) ? await getPlayerByAccountId(Number(accountId)) : null
++
++  if (!player) {
++    return (
++      <main className="site-shell">
++        <div className="video-overlay" />
++        <SiteNav />
++        <div className="content-grid single">
++          <section className="main-column profile-missing">
++            <h1>Jugador no encontrado</h1>
++            <p className="empty-state">No hay ningún jugador con el ID “{accountId}”.</p>
++            <Link href="/ranking" className="all-ranking"><ArrowLeft size={15} /> Volver al ranking</Link>
++          </section>
++        </div>
++      </main>
++    )
++  }
++
++  const [recent, heroes] = await Promise.all([getPlayerMatchStats(player.id), getHeroConstants()])
++  const chronological = [...recent].reverse()
++  const heroById = new Map(heroes.map((hero) => [hero.id, hero]))
++  const winRate = player.played ? Math.round((player.wins / player.played) * 100) : 0
++
++  const topHeroes = [...recent.reduce((map, match) => {
++    const entry = map.get(match.heroId) ?? { heroId: match.heroId, games: 0, wins: 0 }
++    entry.games += 1
++    entry.wins += match.won ? 1 : 0
++    return map.set(match.heroId, entry)
++  }, new Map<number, { heroId: number; games: number; wins: number }>()).values()].sort((a, b) => b.games - a.games).slice(0, 5)
++
++  const keyStats = [
++    ['Puntos', format(player.points)], ['Lobbys jugados', format(player.played)], ['Victorias', format(player.wins)],
++    ['Derrotas', format(player.losses)], ['% victorias', `${winRate}%`],
++  ]
++
++  return (
++    <main className="site-shell">
++      <div className="video-overlay" />
++      <SiteNav />
++      <div className="content-grid single profile">
++        <Link href="/ranking" className="all-ranking back-link"><ArrowLeft size={15} /> Volver al ranking</Link>
++
++        <div className="profile-photo-wrap">
++          {player.avatarUrl
++            ? <img className="profile-photo" src={player.avatarUrl} alt={`Avatar de ${player.name}`} width={160} height={160} />
++            : <div className={`profile-photo rank-avatar ${player.rank}`} aria-label={`Avatar de ${player.name}`}>{player.name.slice(0, 2).toUpperCase()}</div>}
++        </div>
++
++        <section className="profile-card">
++          <span className="eyebrow-small">JUGADOR · ID {player.accountId}</span>
++          <h1>{player.name}</h1>
++          <p className="profile-medal"><span className={`rank-dot ${player.rank}`} /> {player.medal}</p>
++          <dl className="key-stats">{keyStats.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
++        </section>
++
++        <section className="profile-section">
++          <div className="section-heading"><span className="eyebrow-small">RENDIMIENTO RECIENTE</span><h2>Últimas {recent.length} partidas de lobby</h2></div>
++          {recent.length === 0 ? (
++            <p className="empty-state">Este jugador todavía no tiene partidas de lobby importadas.</p>
++          ) : (
++            <>
++              <div className="chart-grid">
++                <article className="chart-card"><header><h3>Oro por minuto (GPM)</h3><strong>{format(average(recent.map((m) => m.goldPerMin)))} <small>media</small></strong></header><LineChart values={chronological.map((m) => m.goldPerMin)} label="Oro por minuto por partida" /></article>
++                <article className="chart-card"><header><h3>Experiencia por minuto (XPM)</h3><strong>{format(average(recent.map((m) => m.xpPerMin)))} <small>media</small></strong></header><LineChart values={chronological.map((m) => m.xpPerMin)} color="#7fadd9" label="Experiencia por minuto por partida" /></article>
++                <article className="chart-card wide"><header><h3>K / D / A por partida</h3><strong>{format(average(recent.map((m) => m.kills)), 1)} / {format(average(recent.map((m) => m.deaths)), 1)} / {format(average(recent.map((m) => m.assists)), 1)} <small>media</small></strong></header><KdaBars matches={chronological} /><p className="legend"><span className="k">Kills</span><span className="d">Muertes</span><span className="a">Asistencias</span></p></article>
++              </div>
++
++              <div className="profile-columns">
++                <article className="chart-card">
++                  <header><h3>Héroes más jugados</h3></header>
++                  <ul className="hero-list">
++                    {topHeroes.map((entry) => {
++                      const hero = heroById.get(entry.heroId)
++                      return (
++                        <li key={entry.heroId}>
++                          {hero ? <img src={hero.img} alt="" width={44} height={25} /> : <span className="hero-fallback" />}
++                          <span className="hero-name">{hero?.localized_name ?? `Héroe #${entry.heroId}`}</span>
++                          <span className="hero-bar"><i style={{ width: `${(entry.wins / entry.games) * 100}%` }} /></span>
++                          <span className="hero-meta">{entry.games} {entry.games === 1 ? 'partida' : 'partidas'} · {Math.round((entry.wins / entry.games) * 100)}%</span>
++                        </li>
++                      )
++                    })}
++                  </ul>
++                </article>
++
++                <article className="chart-card">
++                  <header><h3>Partidas recientes</h3></header>
++                  <ul className="match-list">
++                    {recent.slice(0, 8).map((match) => (
++                      <li key={match.id}>
++                        <span className={match.won ? 'result win' : 'result loss'}>{match.won ? 'Victoria' : 'Derrota'}</span>
++                        <span>{heroById.get(match.heroId)?.localized_name ?? `Héroe #${match.heroId}`}</span>
++                        <span className="kda">{match.kills}/{match.deaths}/{match.assists}</span>
++                        <span className="muted">{Math.round(match.durationSeconds / 60)} min · {new Date(match.playedAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}</span>
++                      </li>
++                    ))}
++                  </ul>
++                </article>
++              </div>
++            </>
++          )}
++        </section>
++      </div>
++    </main>
++  )
++}
+diff --git a/app/page.tsx b/app/page.tsx
+index 478065c..387c838 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -1,53 +1,72 @@
+-'use client'
+-
+-import { useMemo, useState } from 'react'
+ import Link from 'next/link'
+-import { Search, Shield, Swords, Trophy, Users, ChevronRight, Clock3, CircleUserRound } from 'lucide-react'
+-
+-const players = [
+-  { id: '1', name: 'Crisp', points: 1280, wins: 42, played: 61, medal: 'Ancient V', rank: 'ancient', avatar: 'CR' },
+-  { id: '2', name: 'Kuroky', points: 1195, wins: 38, played: 59, medal: 'Legend IV', rank: 'legend', avatar: 'KU' },
+-  { id: '3', name: 'Luna', points: 1140, wins: 36, played: 57, medal: 'Legend III', rank: 'legend', avatar: 'LU' },
+-  { id: '4', name: 'Pudgecito', points: 980, wins: 31, played: 55, medal: 'Archon V', rank: 'archon', avatar: 'PU' },
+-  { id: '5', name: 'Miau', points: 920, wins: 29, played: 53, medal: 'Archon IV', rank: 'archon', avatar: 'MI' },
+-  { id: '6', name: 'InvokerMain', points: 870, wins: 25, played: 48, medal: 'Archon II', rank: 'archon', avatar: 'IN' },
+-  { id: '7', name: 'Roshán', points: 760, wins: 22, played: 46, medal: 'Guardian V', rank: 'guardian', avatar: 'RO' },
+-  { id: '8', name: 'TinyDancer', points: 680, wins: 19, played: 44, medal: 'Guardian III', rank: 'guardian', avatar: 'TI' },
+-]
++import { ChevronRight, Clock3, Trophy, Users } from 'lucide-react'
++import { SiteNav } from '@/components/site-nav'
++import { listEncounters, listPlayers, type Encounter, type LobbyPlayer } from '@/lib/db'
+ 
+-const encounters = [
+-  { title: 'Encuentro 1', time: '21:00', radiant: { name: 'Los Ancianos', players: ['Crisp', 'Luna', 'Pudgecito', 'Miau', 'Roshán'] }, dire: { name: 'Los Errantes', players: ['Kuroky', 'InvokerMain', 'TinyDancer', 'Nox', 'Sombra'] }, winner: 'radiant' },
+-  { title: 'Encuentro 2', time: '21:45', radiant: { name: 'Guardia del Alba', players: ['Kuroky', 'Miau', 'Nox', 'Crisp', 'Sombra'] }, dire: { name: 'Orden del Vacío', players: ['Luna', 'Pudgecito', 'InvokerMain', 'Roshán', 'TinyDancer'] }, winner: null },
+-]
++type Team = { name: string; players: LobbyPlayer[] }
+ 
+-function TeamPanel({ side, team, winner }: { side: 'radiant' | 'dire'; team: { name: string; players: string[] }; winner: boolean }) {
++function TeamPanel({ side, team, winner }: { side: 'radiant' | 'dire'; team: Team; winner: boolean }) {
+   const isRadiant = side === 'radiant'
+-  return <div className={`team-panel ${side} ${winner ? 'winner' : ''}`}>
+-    <div className="team-heading">
+-      <div><span className="side-label">{isRadiant ? 'RADIANT' : 'DIRE'}</span><h3>{team.name}</h3></div>
+-      {winner && <span className="winner-badge"><Trophy size={12} /> GANADOR</span>}
++  return (
++    <div className={`team-panel ${side} ${winner ? 'winner' : ''}`}>
++      <div className="team-heading">
++        <div><span className="side-label">{isRadiant ? 'RADIANT' : 'DIRE'}</span><h3>{team.name}</h3></div>
++        {winner && <span className="winner-badge"><Trophy size={12} /> GANADOR</span>}
++      </div>
++      <div className="player-list">
++        {team.players.map((player) => (
++          <Link href={`/jugador/${player.accountId}`} key={player.id} className="player-row">
++            <span className="player-avatar">{player.name.slice(0, 2).toUpperCase()}</span>
++            <span>{player.name}</span>
++            <ChevronRight size={14} />
++          </Link>
++        ))}
++      </div>
+     </div>
+-    <div className="player-list">{team.players.map((player) => <Link href={`/jugador/${player.toLowerCase()}`} key={player} className="player-row"><span className="player-avatar">{player.slice(0, 2).toUpperCase()}</span><span>{player}</span><ChevronRight size={14} /></Link>)}</div>
+-  </div>
++  )
+ }
+ 
+-function Encounter({ encounter, index }: { encounter: typeof encounters[number]; index: number }) {
+-  return <article className="encounter-card fade-in" style={{ animationDelay: `${index * 90}ms` }}>
+-    <div className="encounter-meta"><span>{encounter.title}</span><span><Clock3 size={14} /> {encounter.time}</span></div>
+-    <div className="teams-wrap"><TeamPanel side="radiant" team={encounter.radiant} winner={encounter.winner === 'radiant'} /><div className="versus">VS</div><TeamPanel side="dire" team={encounter.dire} winner={encounter.winner === 'dire'} /></div>
+-  </article>
++function EncounterCard({ encounter, byId, index }: { encounter: Encounter; byId: Map<string, LobbyPlayer>; index: number }) {
++  const team = (name: string, ids: string[]): Team => ({ name, players: ids.flatMap((id) => byId.get(id) ?? []) })
++  return (
++    <article className="encounter-card fade-in" style={{ animationDelay: `${index * 90}ms` }}>
++      <div className="encounter-meta"><span>{encounter.name}</span><span><Clock3 size={14} /> {encounter.time}</span></div>
++      <div className="teams-wrap">
++        <TeamPanel side="radiant" team={team(encounter.radiantName, encounter.radiant)} winner={encounter.winner === 'radiant'} />
++        <div className="versus">VS</div>
++        <TeamPanel side="dire" team={team(encounter.direName, encounter.dire)} winner={encounter.winner === 'dire'} />
++      </div>
++    </article>
++  )
+ }
+ 
+-export default function Page() {
+-  const [query, setQuery] = useState('')
+-  const filteredPlayers = useMemo(() => players.filter((player) => player.name.toLowerCase().includes(query.toLowerCase())), [query])
+-  return <main className="site-shell">
+-    <video className="background-video" autoPlay muted loop playsInline poster="/placeholder.jpg"><source src="/bg/dota-menu.webm" type="video/webm" /></video><div className="video-overlay" />
+-    <nav className="topbar"><Link href="/" className="brand"><span className="brand-mark"><Swords size={17} /></span><span>DOTA <b>LOBBIES</b></span></Link><div className="nav-links"><a className="active" href="#lobbys">Lobbys</a><a href="#ranking">Ranking</a></div><Link href="/admin" className="admin-link"><Shield size={15} /> Admin</Link></nav>
+-    <div className="content-grid">
+-      <section className="main-column" id="lobbys"><div className="eyebrow"><span className="live-dot" /> TEMPORADA 04 <span className="rule" /> COMUNIDAD</div><div className="page-title-row"><div><h1>Lobbys</h1><p>Partidas de hoy <span>·</span> 24 de octubre, 2024</p></div><div className="next-lobby"><span>PRÓXIMO LOBBY</span><strong>21:00</strong></div></div><div className="encounters">{encounters.map((encounter, index) => <Encounter key={encounter.title} encounter={encounter} index={index} />)}</div></section>
+-      <aside className="ranking-panel" id="ranking"><div className="panel-heading"><div><span className="eyebrow-small">CLASIFICACIÓN</span><h2>Ranking</h2></div><Trophy size={20} /></div><div className="search-box"><Search size={16} /><input aria-label="Buscar jugador" placeholder="Buscar jugador..." value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="ranking-list">{filteredPlayers.map((player, index) => <Link href={`/jugador/${player.id}`} className="rank-row" key={player.id}><span className="position">{String(index + 1).padStart(2, '0')}</span><span className={`rank-avatar ${player.rank}`}>{player.avatar}</span><span className="rank-name"><b>{player.name}</b><small>{player.medal}</small></span><span className="rank-points">{player.points.toLocaleString('es-ES')} <small>PTS</small></span></Link>)}</div><Link href="/ranking" className="all-ranking">Ver ranking completo <ChevronRight size={15} /></Link></aside>
+-    </div>
+-    <footer><span><Users size={14} /> 42 jugadores registrados</span><span>Actualizado hace 8 min</span><span className="status"><i /> SERVIDOR ONLINE</span></footer>
+-  </main>
++export const dynamic = 'force-dynamic'
++
++export default async function Page() {
++  const [encounters, players] = await Promise.all([listEncounters(), listPlayers()])
++  const byId = new Map(players.map((player) => [player.id, player]))
++  const next = encounters.find((encounter) => !encounter.winner) ?? encounters[0]
++  const today = new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })
++
++  return (
++    <main className="site-shell">
++      <video className="background-video" autoPlay muted loop playsInline poster="/placeholder.jpg"><source src="/bg/dota-menu.webm" type="video/webm" /></video>
++      <div className="video-overlay" />
++      <SiteNav />
++      <div className="content-grid single">
++        <section className="main-column">
++          <div className="eyebrow"><span className="live-dot" /> TEMPORADA 04 <span className="rule" /> COMUNIDAD</div>
++          <div className="page-title-row">
++            <div><h1>Lobbys</h1><p>Partidas de hoy <span>·</span> {today}</p></div>
++            {next && <div className="next-lobby"><span>PRÓXIMO LOBBY</span><strong>{next.time}</strong></div>}
++          </div>
++          <div className="encounters">
++            {encounters.map((encounter, index) => <EncounterCard key={encounter.id} encounter={encounter} byId={byId} index={index} />)}
++            {encounters.length === 0 && <p className="empty-state">Todavía no hay lobbys programados para hoy.</p>}
++          </div>
++        </section>
++      </div>
++      <footer><span><Users size={14} /> {players.length} jugadores registrados</span><span className="status"><i /> SERVIDOR ONLINE</span></footer>
++    </main>
++  )
+ }
+diff --git a/app/ranking/page.tsx b/app/ranking/page.tsx
+new file mode 100644
+index 0000000..8a757f7
+--- /dev/null
++++ b/app/ranking/page.tsx
+@@ -0,0 +1,28 @@
++import { Trophy } from 'lucide-react'
++import { RankingTable } from '@/components/ranking-table'
++import { SiteNav } from '@/components/site-nav'
++import { listPlayers } from '@/lib/db'
++
++export const metadata = { title: 'Ranking | Dota Lobbies' }
++
++export const dynamic = 'force-dynamic'
++
++export default async function RankingPage() {
++  const players = await listPlayers()
++  return (
++    <main className="site-shell">
++      <div className="video-overlay" />
++      <SiteNav />
++      <div className="content-grid single">
++        <section className="main-column">
++          <div className="eyebrow"><span className="live-dot" /> CLASIFICACIÓN <span className="rule" /> TEMPORADA 04</div>
++          <div className="page-title-row">
++            <div><h1>Ranking</h1><p>Un punto por cada encuentro ganado en los lobbys.</p></div>
++            <Trophy size={34} className="trophy-icon" />
++          </div>
++          <RankingTable players={players} />
++        </section>
++      </div>
++    </main>
++  )
++}
+diff --git a/components/charts.tsx b/components/charts.tsx
+new file mode 100644
+index 0000000..7ccaefe
+--- /dev/null
++++ b/components/charts.tsx
+@@ -0,0 +1,73 @@
++// Gráficas SVG sin dependencias. Escalan con el ancho del contenedor (viewBox) y tienen tamaño propio,
++// así que no pueden quedarse en 0 px de alto como pasa con ResponsiveContainer de Recharts.
++
++const W = 600
++const H = 180
++const PAD = { top: 16, right: 16, bottom: 26, left: 40 }
++
++function scale(values: number[], min = 0) {
++  const max = Math.max(...values, min + 1)
++  const low = Math.min(min, ...values)
++  return { low, max, y: (value: number) => PAD.top + (1 - (value - low) / (max - low)) * (H - PAD.top - PAD.bottom) }
++}
++
++export function LineChart({ values, color = 'var(--radiant)', label }: { values: number[]; color?: string; label: string }) {
++  if (values.length === 0) return null
++  const { low, max, y } = scale(values)
++  const innerW = W - PAD.left - PAD.right
++  const x = (index: number) => PAD.left + (values.length === 1 ? innerW / 2 : (index / (values.length - 1)) * innerW)
++  const points = values.map((value, index) => `${x(index)},${y(value)}`).join(' ')
++  const area = `${PAD.left},${H - PAD.bottom} ${points} ${x(values.length - 1)},${H - PAD.bottom}`
++  const ticks = [low, (low + max) / 2, max]
++  return (
++    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label} className="chart-svg">
++      {ticks.map((tick) => (
++        <g key={tick}>
++          <line x1={PAD.left} x2={W - PAD.right} y1={y(tick)} y2={y(tick)} stroke="rgba(210,220,205,.12)" />
++          <text x={PAD.left - 8} y={y(tick) + 3} textAnchor="end" fill="#77827b" fontSize="10">{Math.round(tick)}</text>
++        </g>
++      ))}
++      <polygon points={area} fill={color} opacity=".1" />
++      <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
++      {values.map((value, index) => (
++        <g key={index}>
++          <circle cx={x(index)} cy={y(value)} r="3.5" fill="#0b100f" stroke={color} strokeWidth="2"><title>{`Partida ${index + 1}: ${value}`}</title></circle>
++          <text x={x(index)} y={H - 8} textAnchor="middle" fill="#77827b" fontSize="10">{index + 1}</text>
++        </g>
++      ))}
++    </svg>
++  )
++}
++
++export function KdaBars({ matches }: { matches: { kills: number; deaths: number; assists: number }[] }) {
++  if (matches.length === 0) return null
++  const max = Math.max(...matches.flatMap((match) => [match.kills, match.deaths, match.assists]), 1)
++  const innerW = W - PAD.left - PAD.right
++  const innerH = H - PAD.top - PAD.bottom
++  const slot = innerW / matches.length
++  const bar = Math.min(10, (slot - 8) / 3)
++  const series = [['kills', 'var(--radiant)'], ['deaths', 'var(--dire)'], ['assists', '#7fadd9']] as const
++  return (
++    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Kills, muertes y asistencias por partida" className="chart-svg">
++      {[0, max / 2, max].map((tick) => {
++        const ty = PAD.top + (1 - tick / max) * innerH
++        return (
++          <g key={tick}>
++            <line x1={PAD.left} x2={W - PAD.right} y1={ty} y2={ty} stroke="rgba(210,220,205,.12)" />
++            <text x={PAD.left - 8} y={ty + 3} textAnchor="end" fill="#77827b" fontSize="10">{Math.round(tick)}</text>
++          </g>
++        )
++      })}
++      {matches.map((match, index) => (
++        <g key={index} transform={`translate(${PAD.left + index * slot + (slot - bar * 3) / 2},0)`}>
++          {series.map(([key, fill], seriesIndex) => {
++            const value = match[key]
++            const height = (value / max) * innerH
++            return <rect key={key} x={seriesIndex * bar} y={PAD.top + innerH - height} width={bar - 1} height={height} fill={fill} opacity=".85"><title>{`Partida ${index + 1} · ${key}: ${value}`}</title></rect>
++          })}
++          <text x={bar * 1.5} y={H - 8} textAnchor="middle" fill="#77827b" fontSize="10">{index + 1}</text>
++        </g>
++      ))}
++    </svg>
++  )
++}
+diff --git a/components/ranking-table.tsx b/components/ranking-table.tsx
+new file mode 100644
+index 0000000..27ee69c
+--- /dev/null
++++ b/components/ranking-table.tsx
+@@ -0,0 +1,48 @@
++'use client'
++
++import { useMemo, useState } from 'react'
++import Link from 'next/link'
++import { Search } from 'lucide-react'
++import type { LobbyPlayer } from '@/lib/db'
++
++/** `players` llega ya ordenado por puntos; la posición se calcula sobre la lista completa, no sobre el filtro. */
++export function RankingTable({ players }: { players: LobbyPlayer[] }) {
++  const [query, setQuery] = useState('')
++  const rows = useMemo(() => {
++    const term = query.trim().toLowerCase()
++    return players
++      .map((player, index) => ({ player, position: index + 1 }))
++      .filter(({ player }) => !term || player.name.toLowerCase().includes(term) || String(player.accountId).includes(term))
++  }, [players, query])
++
++  return (
++    <div>
++      <div className="search-box ranking-search">
++        <Search size={16} />
++        <input aria-label="Buscar jugador" placeholder="Buscar por nickname o ID de Dota…" value={query} onChange={(event) => setQuery(event.target.value)} />
++      </div>
++      <div className="table-scroll">
++        <table className="ranking-table">
++          <thead>
++            <tr><th>#</th><th>Jugador</th><th>Medalla</th><th className="num">Puntos</th><th className="num">Jugadas</th><th className="num">Victorias</th><th className="num">Derrotas</th><th className="num">% Victorias</th></tr>
++          </thead>
++          <tbody>
++            {rows.map(({ player, position }) => (
++              <tr key={player.id} className={position <= 3 ? `podium podium-${position}` : undefined}>
++                <td className="position">{String(position).padStart(2, '0')}</td>
++                <td><Link href={`/jugador/${player.accountId}`} className="ranking-player"><span className={`rank-avatar ${player.rank}`}>{player.name.slice(0, 2).toUpperCase()}</span><span><b>{player.name}</b><small>ID {player.accountId}</small></span></Link></td>
++                <td>{player.medal}</td>
++                <td className="num strong">{player.points.toLocaleString('es-ES')}</td>
++                <td className="num">{player.played}</td>
++                <td className="num">{player.wins}</td>
++                <td className="num">{player.losses}</td>
++                <td className="num">{player.played ? Math.round((player.wins / player.played) * 100) : 0}%</td>
++              </tr>
++            ))}
++          </tbody>
++        </table>
++        {rows.length === 0 && <p className="empty-state">Ningún jugador coincide con “{query}”.</p>}
++      </div>
++    </div>
++  )
++}
+diff --git a/components/site-nav.tsx b/components/site-nav.tsx
+new file mode 100644
+index 0000000..ee195a9
+--- /dev/null
++++ b/components/site-nav.tsx
+@@ -0,0 +1,26 @@
++'use client'
++
++import Link from 'next/link'
++import { usePathname } from 'next/navigation'
++import { Shield, Swords } from 'lucide-react'
++
++const links = [
++  { href: '/', label: 'Lobbys' },
++  { href: '/ranking', label: 'Ranking' },
++]
++
++export function SiteNav() {
++  const pathname = usePathname()
++  const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href))
++  return (
++    <nav className="topbar">
++      <Link href="/" className="brand"><span className="brand-mark"><Swords size={17} /></span><span>DOTA <b>LOBBIES</b></span></Link>
++      <div className="nav-links">
++        {links.map((link) => (
++          <Link key={link.href} href={link.href} className={isActive(link.href) ? 'active' : undefined} aria-current={isActive(link.href) ? 'page' : undefined}>{link.label}</Link>
++        ))}
++      </div>
++      <Link href="/admin" className="admin-link"><Shield size={15} /> Admin</Link>
++    </nav>
++  )
++}
+diff --git a/lib/db.ts b/lib/db.ts
+index 765910c..a1d8c11 100644
+--- a/lib/db.ts
++++ b/lib/db.ts
+@@ -1,85 +1,185 @@
+-import { getMatch, isRadiantSlot, type OpenDotaMatch } from './opendota'
++import { getMatch, isRadiantSlot, type MockRosterEntry } from './opendota'
+ 
+-export type LobbyPlayer = { id: string; name: string; accountId: number; points: number; wins: number; losses: number; played: number }
+-export type Encounter = { id: string; name: string; radiant: string[]; dire: string[]; winner: 'radiant' | 'dire' | null; dotaMatchId?: number; importedAt?: string }
++// MOCK en memoria. Cuando conectes Supabase, sustituye el cuerpo de estas funciones
++// manteniendo las mismas firmas (y haz applyResult/revertResult dentro de una RPC transaccional).
++
++export type PlayerRank = 'ancient' | 'legend' | 'archon' | 'guardian'
++export type LobbyPlayer = {
++  id: string
++  name: string
++  accountId: number
++  points: number
++  wins: number
++  losses: number
++  played: number
++  /** Medalla. En la versión real sale de OpenDota (rank_tier). */
++  medal: string
++  rank: PlayerRank
++  /** Avatar de Steam. En la versión real sale de OpenDota. */
++  avatarUrl?: string
++}
++export type Encounter = {
++  id: string
++  name: string
++  time: string
++  radiantName: string
++  direName: string
++  radiant: string[]
++  dire: string[]
++  winner: 'radiant' | 'dire' | null
++  dotaMatchId?: number
++  importedAt?: string
++}
+ export type PlayerMatchStat = { id: string; encounterId: string; playerId: string; heroId: number; kills: number; deaths: number; assists: number; goldPerMin: number; xpPerMin: number; lastHits: number; heroDamage: number; durationSeconds: number; isRadiant: boolean; won: boolean; playedAt: string }
+ 
+ const players: LobbyPlayer[] = [
+-  { id: '1', name: 'Crisp', accountId: 1000, points: 1280, wins: 42, losses: 19, played: 61 },
+-  { id: '2', name: 'Kuroky', accountId: 1001, points: 1195, wins: 38, losses: 21, played: 59 },
+-  { id: '3', name: 'Luna', accountId: 1002, points: 1140, wins: 36, losses: 21, played: 57 },
+-  { id: '4', name: 'Pudgecito', accountId: 1003, points: 980, wins: 31, losses: 24, played: 55 },
+-  { id: '5', name: 'Miau', accountId: 1004, points: 920, wins: 29, losses: 24, played: 53 },
+-  { id: '6', name: 'InvokerMain', accountId: 1005, points: 870, wins: 25, losses: 23, played: 48 },
+-  { id: '7', name: 'Roshán', accountId: 1006, points: 760, wins: 22, losses: 24, played: 46 },
+-  { id: '8', name: 'TinyDancer', accountId: 1007, points: 680, wins: 19, losses: 25, played: 44 },
+-  { id: '9', name: 'Nox', accountId: 1008, points: 640, wins: 18, losses: 23, played: 41 },
+-  { id: '10', name: 'Sombra', accountId: 1009, points: 590, wins: 16, losses: 24, played: 40 },
++  { id: '1', name: 'Crisp', accountId: 1000, points: 1280, wins: 42, losses: 19, played: 61, medal: 'Ancient V', rank: 'ancient' },
++  { id: '2', name: 'Kuroky', accountId: 1001, points: 1195, wins: 38, losses: 21, played: 59, medal: 'Legend IV', rank: 'legend' },
++  { id: '3', name: 'Luna', accountId: 1002, points: 1140, wins: 36, losses: 21, played: 57, medal: 'Legend III', rank: 'legend' },
++  { id: '4', name: 'Pudgecito', accountId: 1003, points: 980, wins: 31, losses: 24, played: 55, medal: 'Archon V', rank: 'archon' },
++  { id: '5', name: 'Miau', accountId: 1004, points: 920, wins: 29, losses: 24, played: 53, medal: 'Archon IV', rank: 'archon' },
++  { id: '6', name: 'InvokerMain', accountId: 1005, points: 870, wins: 25, losses: 23, played: 48, medal: 'Archon II', rank: 'archon' },
++  { id: '7', name: 'Roshán', accountId: 1006, points: 760, wins: 22, losses: 24, played: 46, medal: 'Guardian V', rank: 'guardian' },
++  { id: '8', name: 'TinyDancer', accountId: 1007, points: 680, wins: 19, losses: 25, played: 44, medal: 'Guardian III', rank: 'guardian' },
++  { id: '9', name: 'Nox', accountId: 1008, points: 640, wins: 18, losses: 23, played: 41, medal: 'Guardian II', rank: 'guardian' },
++  { id: '10', name: 'Sombra', accountId: 1009, points: 590, wins: 16, losses: 24, played: 40, medal: 'Guardian I', rank: 'guardian' },
+ ]
+ 
+ const encounters: Encounter[] = [
+-  { id: 'enc-1', name: 'Encuentro 1', radiant: ['1', '3', '4', '5', '7'], dire: ['2', '6', '8', '9', '10'], winner: null },
+-  { id: 'enc-2', name: 'Encuentro 2', radiant: ['2', '5', '9', '1', '10'], dire: ['3', '4', '6', '7', '8'], winner: null },
++  { id: 'enc-1', name: 'Encuentro 1', time: '21:00', radiantName: 'Los Ancianos', direName: 'Los Errantes', radiant: ['1', '3', '4', '5', '7'], dire: ['2', '6', '8', '9', '10'], winner: null },
++  { id: 'enc-2', name: 'Encuentro 2', time: '21:45', radiantName: 'Guardia del Alba', direName: 'Orden del Vacío', radiant: ['2', '5', '9', '1', '10'], dire: ['3', '4', '6', '7', '8'], winner: null },
+ ]
++
+ const stats: PlayerMatchStat[] = []
+ 
++/**
++ * Libro de resultados aplicados: qué sumó cada encuentro a cada jugador.
++ * Permite deshacer un resultado antes de aplicar otro, así importar dos veces
++ * o cambiar el ganador nunca suma puntos de más.
++ */
++const ledger = new Map<string, { playerId: string; won: boolean }[]>()
++
++// --- DEMO: partidas de ejemplo para que los perfiles muestren gráficas. Pon false para empezar vacío. ---
++const SEED_DEMO_STATS = true
++const DEMO_HERO_IDS = [1, 18, 23, 7, 86]
++if (SEED_DEMO_STATS) {
++  let seed = 42
++  const rand = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296 }
++  const now = Date.now()
++  for (const player of players) {
++    for (let match = 0; match < 8; match += 1) {
++      const won = rand() > 0.45
++      stats.push({
++        id: `demo-${match}-${player.id}`, encounterId: `demo-${match}`, playerId: player.id,
++        heroId: DEMO_HERO_IDS[Math.floor(rand() * DEMO_HERO_IDS.length)],
++        kills: 2 + Math.floor(rand() * 14), deaths: 1 + Math.floor(rand() * 9), assists: 3 + Math.floor(rand() * 18),
++        goldPerMin: 330 + Math.floor(rand() * 330), xpPerMin: 380 + Math.floor(rand() * 300),
++        lastHits: 90 + Math.floor(rand() * 220), heroDamage: 9000 + Math.floor(rand() * 26000),
++        durationSeconds: 1800 + Math.floor(rand() * 1500), isRadiant: rand() > 0.5, won,
++        playedAt: new Date(now - (8 - match) * 86_400_000).toISOString(),
++      })
++    }
++  }
++}
++
+ export async function listEncounters() { return encounters }
+-export async function listPlayers() { return players }
++export async function listPlayers() { return [...players].sort((a, b) => b.points - a.points) }
++export async function getPlayerById(id: string) { return players.find((player) => player.id === id) ?? null }
++export async function getPlayerByAccountId(accountId: number) { return players.find((player) => player.accountId === accountId) ?? null }
+ 
+-function applyResult(encounter: Encounter, match: OpenDotaMatch) {
+-  const winningSide = match.radiant_win ? 'radiant' : 'dire'
+-  const assignedIds = [...encounter.radiant, ...encounter.dire]
+-  for (const playerId of assignedIds) {
+-    const player = players.find((item) => item.id === playerId)
++/** Deshace lo que el encuentro sumó a cada jugador (si no había nada aplicado, no hace nada). */
++function revertResult(encounterId: string) {
++  for (const entry of ledger.get(encounterId) ?? []) {
++    const player = players.find((item) => item.id === entry.playerId)
+     if (!player) continue
+-    const won = (winningSide === 'radiant' ? encounter.radiant : encounter.dire).includes(playerId)
+-    player.played += 1
+-    player.points += won ? 1 : 0
+-    player.wins += won ? 1 : 0
+-    player.losses += won ? 0 : 1
++    player.played = Math.max(0, player.played - 1)
++    if (entry.won) {
++      player.wins = Math.max(0, player.wins - 1)
++      player.points = Math.max(0, player.points - 1)
++    } else {
++      player.losses = Math.max(0, player.losses - 1)
++    }
+   }
++  ledger.delete(encounterId)
+ }
+ 
+-export async function importMatch(encounterId: string, matchId: number, force = false) {
+-  const encounter = encounters.find((item) => item.id === encounterId)
+-  if (!encounter) throw new Error('ENCOUNTER_NOT_FOUND')
+-  const match = await getMatch(matchId)
+-  if (match.players.length !== 10) throw new Error('MATCH_NOT_AVAILABLE')
+-  if (!force && (encounter.dotaMatchId === matchId || encounters.some((item) => item.id !== encounterId && item.dotaMatchId === matchId))) throw new Error('MATCH_ALREADY_IMPORTED')
+-  if (force && encounter.dotaMatchId) {
+-    for (const playerId of [...encounter.radiant, ...encounter.dire]) {
++/** Suma el resultado: +1 punto y +1 victoria a cada jugador ganador, +1 derrota a cada perdedor, +1 jugada a todos. */
++function applyResult(encounter: Encounter, winningSide: 'radiant' | 'dire') {
++  const applied: { playerId: string; won: boolean }[] = []
++  for (const [side, ids] of [['radiant', encounter.radiant], ['dire', encounter.dire]] as const) {
++    for (const playerId of ids) {
+       const player = players.find((item) => item.id === playerId)
+       if (!player) continue
+-      const previous = stats.find((stat) => stat.encounterId === encounterId && stat.playerId === playerId)
+-      if (previous) {
+-        player.played = Math.max(0, player.played - 1)
+-        player.wins = Math.max(0, player.wins - (previous.won ? 1 : 0))
+-        player.losses = Math.max(0, player.losses - (previous.won ? 0 : 1))
+-        player.points = Math.max(0, player.points - (previous.won ? 1 : 0))
+-      }
++      const won = side === winningSide
++      player.played += 1
++      if (won) { player.points += 1; player.wins += 1 } else { player.losses += 1 }
++      applied.push({ playerId, won })
+     }
+-    for (let index = stats.length - 1; index >= 0; index -= 1) if (stats[index].encounterId === encounterId) stats.splice(index, 1)
+   }
++  ledger.set(encounter.id, applied)
++}
++
++export async function importMatch(encounterId: string, matchId: number, force = false) {
++  const encounter = encounters.find((item) => item.id === encounterId)
++  if (!encounter) throw new Error('ENCOUNTER_NOT_FOUND')
++
++  const assigned = [
++    ...encounter.radiant.map((id) => ({ id, isRadiant: true })),
++    ...encounter.dire.map((id) => ({ id, isRadiant: false })),
++  ].flatMap((entry) => { const player = players.find((item) => item.id === entry.id); return player ? [{ player, isRadiant: entry.isRadiant }] : [] })
++  const roster: MockRosterEntry[] = assigned.map((entry) => ({ accountId: entry.player.accountId, isRadiant: entry.isRadiant }))
++
++  const match = await getMatch(matchId, roster)
++  if (match.players.length !== 10) throw new Error('MATCH_NOT_AVAILABLE')
++  const duplicate = encounters.some((item) => item.dotaMatchId === matchId && (item.id !== encounterId || !force))
++  if (duplicate) throw new Error('MATCH_ALREADY_IMPORTED')
++
++  // Emparejar por account_id (nunca por posición). Los perfiles privados llegan con account_id null.
++  const mapped = match.players.map((matchPlayer) => ({
++    matchPlayer,
++    player: matchPlayer.account_id == null ? undefined : assigned.find((entry) => entry.player.accountId === matchPlayer.account_id)?.player,
++  }))
++  if (mapped.some((entry) => !entry.player)) throw new Error('UNMAPPED_PLAYERS')
++
++  // Todo validado: a partir de aquí se modifica el estado. En Supabase, esto va dentro de una única transacción.
++  revertResult(encounterId)
++  for (let index = stats.length - 1; index >= 0; index -= 1) if (stats[index].encounterId === encounterId) stats.splice(index, 1)
++
++  // La partida manda: el bando real de cada jugador sale de player_slot.
++  encounter.radiant = mapped.filter((entry) => isRadiantSlot(entry.matchPlayer.player_slot)).map((entry) => entry.player!.id)
++  encounter.dire = mapped.filter((entry) => !isRadiantSlot(entry.matchPlayer.player_slot)).map((entry) => entry.player!.id)
+   encounter.dotaMatchId = match.match_id
+   encounter.importedAt = new Date().toISOString()
+   encounter.winner = match.radiant_win ? 'radiant' : 'dire'
+-  match.players.forEach((matchPlayer, index) => {
+-    const playerId = players[index]?.id
+-    if (!playerId) return
+-    stats.push({ id: `${encounterId}-${playerId}`, encounterId, playerId, heroId: matchPlayer.hero_id, kills: matchPlayer.kills, deaths: matchPlayer.deaths, assists: matchPlayer.assists, goldPerMin: matchPlayer.gold_per_min, xpPerMin: matchPlayer.xp_per_min, lastHits: matchPlayer.last_hits, heroDamage: matchPlayer.hero_damage, durationSeconds: match.duration, isRadiant: isRadiantSlot(matchPlayer.player_slot), won: match.radiant_win === isRadiantSlot(matchPlayer.player_slot), playedAt: new Date(match.start_time * 1000).toISOString() })
+-  })
+-  applyResult(encounter, match)
++
++  for (const { matchPlayer, player } of mapped) {
++    const isRadiant = isRadiantSlot(matchPlayer.player_slot)
++    stats.push({
++      id: `${encounterId}-${player!.id}`, encounterId, playerId: player!.id, heroId: matchPlayer.hero_id,
++      kills: matchPlayer.kills, deaths: matchPlayer.deaths, assists: matchPlayer.assists,
++      goldPerMin: matchPlayer.gold_per_min, xpPerMin: matchPlayer.xp_per_min, lastHits: matchPlayer.last_hits,
++      heroDamage: matchPlayer.hero_damage, durationSeconds: match.duration, isRadiant,
++      won: match.radiant_win === isRadiant, playedAt: new Date(match.start_time * 1000).toISOString(),
++    })
++  }
++  applyResult(encounter, encounter.winner)
+   return encounter
+ }
+ 
++/** Fallback manual para encuentros sin ID de partida. Se puede cambiar el ganador las veces que haga falta. */
+ export async function markWinner(encounterId: string, winner: 'radiant' | 'dire') {
+   const encounter = encounters.find((item) => item.id === encounterId)
+   if (!encounter) throw new Error('ENCOUNTER_NOT_FOUND')
++  if (encounter.dotaMatchId) throw new Error('ENCOUNTER_IMPORTED')
++  revertResult(encounterId)
+   encounter.winner = winner
+-  const fakeMatch = await getMatch(Date.now())
+-  fakeMatch.radiant_win = winner === 'radiant'
+-  applyResult(encounter, fakeMatch)
++  applyResult(encounter, winner)
+   return encounter
+ }
+ 
+-export async function getPlayerMatchStats(playerId: string) { return stats.filter((stat) => stat.playerId === playerId).slice(-20).reverse() }
++export async function getPlayerMatchStats(playerId: string) {
++  return stats
++    .filter((stat) => stat.playerId === playerId)
++    .sort((a, b) => b.playedAt.localeCompare(a.playedAt))
++    .slice(0, 20)
++}
+diff --git a/lib/opendota.ts b/lib/opendota.ts
+index 79e4105..6ad9f13 100644
+--- a/lib/opendota.ts
++++ b/lib/opendota.ts
+@@ -27,27 +27,39 @@ export type OpenDotaMatch = {
+ }
+ 
+ const heroes: OpenDotaHero[] = [
+-  { id: 1, name: 'npc_dota_hero_antimage', localized_name: 'Anti-Mage', img: '/heroes/antimage.png' },
+-  { id: 18, name: 'npc_dota_hero_juggernaut', localized_name: 'Juggernaut', img: '/heroes/juggernaut.png' },
+-  { id: 23, name: 'npc_dota_hero_kunkka', localized_name: 'Kunkka', img: '/heroes/kunkka.png' },
+-  { id: 7, name: 'npc_dota_hero_vengefulspirit', localized_name: 'Vengeful Spirit', img: '/heroes/vengefulspirit.png' },
+-  { id: 86, name: 'npc_dota_hero_rubick', localized_name: 'Rubick', img: '/heroes/rubick.png' },
++  { id: 1, name: 'npc_dota_hero_antimage', localized_name: 'Anti-Mage', img: 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/antimage.png' },
++  { id: 18, name: 'npc_dota_hero_juggernaut', localized_name: 'Juggernaut', img: 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/juggernaut.png' },
++  { id: 23, name: 'npc_dota_hero_kunkka', localized_name: 'Kunkka', img: 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/kunkka.png' },
++  { id: 7, name: 'npc_dota_hero_vengefulspirit', localized_name: 'Vengeful Spirit', img: 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/vengefulspirit.png' },
++  { id: 86, name: 'npc_dota_hero_rubick', localized_name: 'Rubick', img: 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/rubick.png' },
+ ]
+ 
+ export async function getHeroConstants(): Promise<OpenDotaHero[]> {
+   return heroes
+ }
+ 
+-export async function getMatch(matchId: number): Promise<OpenDotaMatch> {
++/** Jugador esperado en la partida. Solo lo usa el mock para generar una partida coherente con el encuentro. */
++export type MockRosterEntry = { accountId: number; isRadiant: boolean }
++
++/**
++ * MOCK. La versión real hará GET https://api.opendota.com/api/matches/{matchId} desde el servidor.
++ * `roster` solo existe para que el mock devuelva los mismos jugadores que tiene asignados el encuentro.
++ */
++export async function getMatch(matchId: number, roster?: MockRosterEntry[]): Promise<OpenDotaMatch> {
+   if (!Number.isSafeInteger(matchId) || matchId < 1) throw new Error('MATCH_NOT_AVAILABLE')
++  const entries: MockRosterEntry[] = roster?.length
++    ? roster
++    : Array.from({ length: 10 }, (_, index) => ({ accountId: 1000 + index, isRadiant: index < 5 }))
++  let radiantSlot = 0
++  let direSlot = 0
+   return {
+     match_id: matchId,
+     duration: 2420,
+     start_time: Date.now() / 1000 - 3600,
+     radiant_win: matchId % 2 === 0,
+-    players: Array.from({ length: 10 }, (_, index) => ({
+-      account_id: 1000 + index,
+-      player_slot: index < 5 ? index : 128 + index,
++    players: entries.map((entry, index) => ({
++      account_id: entry.accountId,
++      player_slot: entry.isRadiant ? radiantSlot++ : 128 + direSlot++,
+       hero_id: heroes[index % heroes.length].id,
+       kills: 4 + (index % 7),
+       deaths: 2 + (index % 4),
